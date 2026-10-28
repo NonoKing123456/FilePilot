@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs/promises');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
-const { runOperation, getCapabilities, previewImage } = require('./operations');
+const { runOperation, getCapabilities, previewImage, makeThumb } = require('./operations');
 
 let mainWindow;
 
@@ -60,21 +60,42 @@ ipcMain.handle('output:default', () => defaultOutputDirectory());
 ipcMain.handle('app:capabilities', () => getCapabilities());
 ipcMain.handle('preview:image', async (_event, payload) => {
   if (!payload?.filePath) throw new Error('缺少预览文件。');
-  return previewImage(payload.filePath, payload.options || {}, payload.original === true);
+  return previewImage(payload.filePath, payload.options || {}, payload.original === true, { fast: payload.fast === true });
 });
 
+ipcMain.handle('image:thumb', async (_event, filePath) => {
+  if (!filePath) throw new Error('缺少文件路径。');
+  return makeThumb(filePath);
+});
+
+let activeTask = null;
+
 ipcMain.handle('operation:run', async (_event, payload) => {
+  if (activeTask) throw new Error('已有任务正在处理，请稍候。');
+  const token = { cancelled: false };
+  activeTask = token;
   const outputDirectory = payload.outputDirectory || defaultOutputDirectory();
-  await fs.mkdir(outputDirectory, { recursive: true });
-  return runOperation({
-    ...payload,
-    outputDirectory,
-    onProgress: (progress) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('operation:progress', progress);
+  try {
+    await fs.mkdir(outputDirectory, { recursive: true });
+    return await runOperation({
+      ...payload,
+      outputDirectory,
+      isCancelled: () => token.cancelled,
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('operation:progress', progress);
+        }
       }
-    }
-  });
+    });
+  } finally {
+    activeTask = null;
+  }
+});
+
+ipcMain.handle('operation:cancel', () => {
+  if (!activeTask) return false;
+  activeTask.cancelled = true;
+  return true;
 });
 
 ipcMain.handle('file:reveal', (_event, filePath) => shell.showItemInFolder(filePath));

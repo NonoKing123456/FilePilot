@@ -94,6 +94,22 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value)));
 }
 
+function throwIfCancelled(options) {
+  if (options?.isCancelled?.()) throw new Error('已取消');
+}
+
+async function imageInfo(filePath) {
+  const metadata = await sharp(filePath, { animated: false }).metadata();
+  const swaps = [5, 6, 7, 8].includes(metadata.orientation);
+  return {
+    width: swaps ? metadata.height : metadata.width,
+    height: swaps ? metadata.width : metadata.height,
+    hasAlpha: Boolean(metadata.hasAlpha),
+    pages: metadata.pages || 1,
+    format: (metadata.format || '').toLowerCase()
+  };
+}
+
 function resolveImageFormat(filePath, requestedFormat) {
   if (requestedFormat && requestedFormat !== 'original') return requestedFormat.replace('jpg', 'jpeg').replace('tif', 'tiff');
   const original = path.extname(filePath).slice(1).toLowerCase().replace('jpg', 'jpeg').replace('tif', 'tiff');
@@ -139,12 +155,25 @@ async function prepareImage(filePath, options = {}) {
     }
   }
 
-  const width = Number(options.width || 0) || undefined;
+  const explicitWidth = Number(options.width || 0) || undefined;
   const height = Number(options.height || 0) || undefined;
+  const width = explicitWidth || (options.scale ? Math.max(1, Math.round(workingWidth * Number(options.scale))) : undefined);
+  let finalWidth = workingWidth;
+  let finalHeight = workingHeight;
   if (width || height) {
     image = image.resize({ width, height, fit: options.fit || 'inside', withoutEnlargement: options.allowUpscale !== true });
+    if (width && height) {
+      finalWidth = width;
+      finalHeight = height;
+    } else if (width) {
+      finalWidth = options.allowUpscale === true ? width : Math.min(width, workingWidth);
+      finalHeight = Math.max(1, Math.round(workingHeight * finalWidth / workingWidth));
+    } else {
+      finalHeight = options.allowUpscale === true ? height : Math.min(height, workingHeight);
+      finalWidth = Math.max(1, Math.round(workingWidth * finalHeight / workingHeight));
+    }
   }
-  return { image, sourceWidth, sourceHeight, workingWidth, workingHeight };
+  return { image, sourceWidth, sourceHeight, workingWidth, workingHeight, finalWidth, finalHeight };
 }
 
 function applyImageFormat(image, format, quality) {
@@ -211,8 +240,24 @@ async function encodeToTargetSize(makeImage, format, targetBytes, options = {}) 
     if (fits(current)) low = current.quality;
     else high = current.quality;
   }
-  const winner = pick();
-  return { ...winner, targeted: true, reachedTarget: winner.buffer.length <= target };
+  let winner = pick();
+  let downscaled = false;
+  // 质量压到 20 仍超标时，缩尺寸才是真正有效的手段
+  if (winner.buffer.length > target && options.allowDownscale !== false && format !== 'gif') {
+    const originalWidth = winner.width;
+    for (let round = 0; round < 2 && winner.buffer.length > target; round += 1) {
+      const ratio = Math.sqrt(goal / winner.buffer.length) * 0.98;
+      const nextWidth = Math.max(64, Math.round(winner.width * ratio));
+      if (nextWidth >= winner.width) break;
+      const scaled = await encodeImageBuffer(() => makeImage().resize({ width: nextWidth, fit: 'inside' }), format, Math.max(20, winner.quality));
+      attempts.push(scaled);
+      const better = pick();
+      if (better.buffer.length >= winner.buffer.length) break;
+      winner = better;
+      downscaled = winner.width < originalWidth;
+    }
+  }
+  return { ...winner, targeted: true, reachedTarget: winner.buffer.length <= target, downscaled };
 }
 
 async function renderImageVariant(image, filePath, options = {}) {
@@ -227,45 +272,79 @@ function imageOutputExtension(format) {
   return format === 'jpeg' ? '.jpg' : format === 'tiff' ? '.tif' : `.${format}`;
 }
 
-async function previewImage(filePath, options = {}, original = false) {
+const PREVIEW_EDGE = 1400;
+
+async function previewImage(filePath, options = {}, original = false, extra = {}) {
   const stat = await fsp.stat(filePath);
-  const prepared = await prepareImage(filePath, original ? {} : options);
+  const info = await imageInfo(filePath);
+  if (!info.width || !info.height) throw new Error('无法读取图片尺寸。');
+
   if (original) {
-    const previewBuffer = await prepared.image.resize({ width: 1100, height: 820, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+    const pipeline = sharp(filePath).rotate().resize({ width: PREVIEW_EDGE, height: PREVIEW_EDGE, fit: 'inside', withoutEnlargement: true });
+    const buffer = info.hasAlpha
+      ? await pipeline.png({ compressionLevel: 6 }).toBuffer()
+      : await pipeline.jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+    const thumb = await sharp(filePath).rotate().resize({ width: 160, height: 160, fit: 'cover' }).jpeg({ quality: 72 }).toBuffer();
     return {
-      dataUrl: `data:image/jpeg;base64,${previewBuffer.toString('base64')}`,
-      width: prepared.sourceWidth,
-      height: prepared.sourceHeight,
+      dataUrl: `${info.hasAlpha ? 'data:image/png;base64,' : 'data:image/jpeg;base64,'}${buffer.toString('base64')}`,
+      thumb: `data:image/jpeg;base64,${thumb.toString('base64')}`,
+      width: info.width,
+      height: info.height,
       originalSize: stat.size,
       estimatedSize: stat.size,
-      format: path.extname(filePath).slice(1).toLowerCase()
+      format: info.format,
+      hasAlpha: info.hasAlpha,
+      pages: info.pages
     };
   }
-  const variant = await renderImageVariant(prepared.image, filePath, { ...options, thoroughTarget: false });
-  const previewBuffer = await sharp(variant.buffer).resize({ width: 1100, height: 820, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+
+  const prepared = await prepareImage(filePath, options);
+  const approximate = extra.fast === true;
+  let variant;
+  if (approximate) {
+    const small = prepared.image.clone().resize({ width: 900, height: 900, fit: 'inside', withoutEnlargement: true });
+    variant = await renderImageVariant(small, filePath, { ...options, targetBytes: 0 }, { thorough: false });
+  } else {
+    variant = await renderImageVariant(prepared.image, filePath, { ...options, thoroughTarget: false });
+  }
+  const keepsAlpha = ['png', 'webp', 'avif', 'gif'].includes(variant.format) && info.hasAlpha;
+  const pipeline = sharp(variant.buffer).resize({ width: PREVIEW_EDGE, height: PREVIEW_EDGE, fit: 'inside', withoutEnlargement: true });
+  const buffer = keepsAlpha ? await pipeline.png({ compressionLevel: 6 }).toBuffer() : await pipeline.jpeg({ quality: 90 }).toBuffer();
   return {
-    dataUrl: `data:image/jpeg;base64,${previewBuffer.toString('base64')}`,
-    width: variant.width,
-    height: variant.height,
+    dataUrl: `${keepsAlpha ? 'data:image/png;base64,' : 'data:image/jpeg;base64,'}${buffer.toString('base64')}`,
+    width: approximate ? prepared.finalWidth : variant.width,
+    height: approximate ? prepared.finalHeight : variant.height,
     originalSize: stat.size,
     estimatedSize: variant.buffer.length,
+    approximate,
     format: variant.format,
     quality: variant.quality,
     targeted: variant.targeted,
-    reachedTarget: variant.reachedTarget
+    reachedTarget: variant.reachedTarget,
+    downscaled: Boolean(variant.downscaled),
+    hasAlpha: info.hasAlpha,
+    pages: info.pages
   };
+}
+
+async function makeThumb(filePath) {
+  const buffer = await sharp(filePath).rotate().resize({ width: 160, height: 160, fit: 'cover' }).jpeg({ quality: 72 }).toBuffer();
+  return `data:image/jpeg;base64,${buffer.toString('base64')}`;
 }
 
 async function processImages(files, options, outputDirectory, onProgress) {
   const imageFiles = files.filter((file) => typeOf(file) === 'image');
   if (!imageFiles.length) throw new Error('请选择至少一个图片文件。');
+  const perFile = options.perFile || {};
   const outputs = [];
 
   for (let index = 0; index < imageFiles.length; index += 1) {
+    throwIfCancelled(options);
     const file = imageFiles[index];
     report(onProgress, index, imageFiles.length, '正在处理图片', file.name);
-    const prepared = await prepareImage(file.path, options);
-    const variant = await renderImageVariant(prepared.image, file.path, options);
+    const fileOptions = { ...options, ...(perFile[file.path] || {}) };
+    const prepared = await prepareImage(file.path, fileOptions);
+    const variant = await renderImageVariant(prepared.image, file.path, fileOptions);
     const base = `${path.basename(file.name, path.extname(file.name))}-${options.nameSuffix || 'processed'}`;
     const outputPath = await uniqueOutputPath(outputDirectory, base, imageOutputExtension(variant.format));
     await fsp.writeFile(outputPath, variant.buffer);
@@ -281,6 +360,7 @@ async function mergePdfs(files, options, outputDirectory, onProgress) {
   if (pdfFiles.length < 2) throw new Error('合并 PDF 至少需要两个 PDF 文件。');
   const merged = await PDFDocument.create();
   for (let index = 0; index < pdfFiles.length; index += 1) {
+    throwIfCancelled(options);
     const file = pdfFiles[index];
     report(onProgress, index, pdfFiles.length, '正在合并 PDF', file.name);
     const source = await PDFDocument.load(await fsp.readFile(file.path), { ignoreEncryption: false });
@@ -302,6 +382,7 @@ async function splitPdfs(files, options, outputDirectory, onProgress) {
     const source = await PDFDocument.load(await fsp.readFile(file.path));
     const indices = source.getPageIndices();
     for (const pageIndex of indices) {
+      throwIfCancelled(options);
       report(onProgress, completed, indices.length * pdfFiles.length, '正在拆分 PDF', `${file.name} · 第 ${pageIndex + 1} 页`);
       const target = await PDFDocument.create();
       const [page] = await target.copyPages(source, [pageIndex]);
@@ -323,6 +404,7 @@ async function rotatePdfs(files, options, outputDirectory, onProgress) {
   const outputs = [];
   const angle = Number(options.rotation || 90);
   for (let index = 0; index < pdfFiles.length; index += 1) {
+    throwIfCancelled(options);
     const file = pdfFiles[index];
     report(onProgress, index, pdfFiles.length, '正在旋转 PDF', file.name);
     const document = await PDFDocument.load(await fsp.readFile(file.path));
@@ -344,6 +426,7 @@ async function imagesToPdf(files, options, outputDirectory, onProgress) {
   if (!imageFiles.length) throw new Error('请选择图片文件。');
   const document = await PDFDocument.create();
   for (let index = 0; index < imageFiles.length; index += 1) {
+    throwIfCancelled(options);
     const file = imageFiles[index];
     report(onProgress, index, imageFiles.length, '正在生成 PDF', file.name);
     const png = await sharp(file.path).rotate().png().toBuffer();
@@ -365,6 +448,7 @@ async function imagesToPdf(files, options, outputDirectory, onProgress) {
 
 async function createArchive(files, options, outputDirectory, onProgress) {
   if (!files.length) throw new Error('请添加要打包的文件。');
+  throwIfCancelled(options);
   const outputPath = await uniqueOutputPath(outputDirectory, options.outputName || 'FilePilot-文件包', '.zip');
   await new Promise((resolve, reject) => {
     const output = fs.createWriteStream(outputPath);
@@ -381,15 +465,22 @@ async function createArchive(files, options, outputDirectory, onProgress) {
   return [{ path: outputPath, name: path.basename(outputPath), size: (await fsp.stat(outputPath)).size }];
 }
 
-function runProcess(command, args, onLine) {
+function runProcess(command, args, onLine, isCancelled) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
     let stderr = '';
+    const timer = setInterval(() => {
+      if (isCancelled && isCancelled()) {
+        try { child.kill('SIGKILL'); } catch { /* 进程可能已结束 */ }
+      }
+    }, 400);
     child.stdout.on('data', (chunk) => onLine?.(chunk.toString()));
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', reject);
+    child.on('error', (error) => { clearInterval(timer); reject(error); });
     child.on('close', (code) => {
+      clearInterval(timer);
       if (code === 0) resolve();
+      else if (isCancelled && isCancelled()) reject(new Error('已取消'));
       else reject(new Error(stderr.split('\n').filter(Boolean).slice(-4).join(' ') || `处理进程退出，代码 ${code}`));
     });
   });
@@ -403,6 +494,7 @@ async function processMedia(files, options, outputDirectory, onProgress) {
   const outputs = [];
 
   for (let index = 0; index < mediaFiles.length; index += 1) {
+    throwIfCancelled(options);
     const file = mediaFiles[index];
     const kind = typeOf(file);
     const targetFormat = options.format || (kind === 'video' ? 'mp4' : 'mp3');
@@ -428,7 +520,7 @@ async function processMedia(files, options, outputDirectory, onProgress) {
     report(onProgress, index, mediaFiles.length, '正在处理音视频', file.name);
     await runProcess(ffmpegPath, args, (line) => {
       if (line.includes('progress=')) report(onProgress, index + 0.5, mediaFiles.length, '正在编码', file.name);
-    });
+    }, options.isCancelled);
     outputs.push({ path: outputPath, name: path.basename(outputPath), size: (await fsp.stat(outputPath)).size, sourceSize: file.size });
   }
   report(onProgress, mediaFiles.length, mediaFiles.length, '音视频处理完成');
@@ -464,6 +556,7 @@ async function convertDocuments(files, options, outputDirectory, onProgress) {
   if (!files.length) throw new Error('请选择要转换的文档。');
   const outputs = [];
   for (let index = 0; index < files.length; index += 1) {
+    throwIfCancelled(options);
     const file = files[index];
     const ext = extensionOf(file);
     const format = String(options.format || 'txt').toLowerCase();
@@ -521,8 +614,9 @@ function chooseSmartOperation(files) {
   return 'archive-create';
 }
 
-async function runOperation({ operation, files = [], options = {}, outputDirectory, onProgress }) {
+async function runOperation({ operation, files = [], options = {}, outputDirectory, onProgress, isCancelled }) {
   if (!files.length) throw new Error('请先添加文件。');
+  if (isCancelled) options = { ...options, isCancelled };
   const selected = operation === 'smart' ? chooseSmartOperation(files) : operation;
   let outputs;
   if (['image-optimize', 'image-convert', 'image-adjust', 'image-resize', 'image-crop'].includes(selected)) {
@@ -547,6 +641,7 @@ async function runOperation({ operation, files = [], options = {}, outputDirecto
 module.exports = {
   getCapabilities,
   previewImage,
+  makeThumb,
   runOperation,
   typeOf,
   sanitizeBaseName,

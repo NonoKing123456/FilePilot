@@ -23,3 +23,7 @@ pnpm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# build cache
+.cache/
+.tmp/
