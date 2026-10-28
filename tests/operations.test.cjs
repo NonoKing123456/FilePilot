@@ -75,6 +75,50 @@ test('uses the visible crop rectangle for preview and final image', async (t) =>
   assert.equal(metadata.height, 60);
 });
 
+test('merges crop and resize into one step', async (t) => {
+  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'filepilot-adjust-'));
+  t.after(() => fsp.rm(directory, { recursive: true, force: true }));
+  const input = path.join(directory, 'adjust-source.png');
+  await sharp({ create: { width: 200, height: 120, channels: 4, background: '#3478f6' } }).png().toFile(input);
+  const cropArea = { left: 0.25, top: 0.25, width: 0.5, height: 0.5 };
+  const preview = await previewImage(input, { format: 'png', cropArea, width: 50 }, false);
+  assert.equal(preview.width, 50);
+  assert.equal(preview.height, 30);
+  const result = await runOperation({
+    operation: 'image-adjust',
+    files: [{ path: input, name: 'adjust-source.png', size: (await fsp.stat(input)).size, ext: '.png' }],
+    options: { format: 'png', cropArea, width: 50, nameSuffix: 'cropped' },
+    outputDirectory: directory
+  });
+  const metadata = await sharp(result.outputs[0].path).metadata();
+  assert.equal(metadata.width, 50);
+  assert.equal(metadata.height, 30);
+});
+
+test('compresses down to a requested maximum file size', async (t) => {
+  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'filepilot-target-'));
+  t.after(() => fsp.rm(directory, { recursive: true, force: true }));
+  const input = path.join(directory, 'noise.jpg');
+  const width = 640;
+  const height = 480;
+  const noise = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < noise.length; index += 1) noise[index] = (index * 37) % 251;
+  await sharp(noise, { raw: { width, height, channels: 3 } }).jpeg({ quality: 98 }).toFile(input);
+  const targetBytes = 60 * 1024;
+  const preview = await previewImage(input, { format: 'jpeg', targetBytes }, false);
+  assert.equal(preview.targeted, true);
+  assert.equal(preview.reachedTarget, true);
+  assert.ok(preview.estimatedSize <= targetBytes * 1.02, `preview ${preview.estimatedSize} exceeds target`);
+  assert.ok(preview.quality < 98);
+  const result = await runOperation({
+    operation: 'image-optimize',
+    files: [{ path: input, name: 'noise.jpg', size: (await fsp.stat(input)).size, ext: '.jpg' }],
+    options: { format: 'jpeg', targetBytes, nameSuffix: 'compressed' },
+    outputDirectory: directory
+  });
+  assert.ok(result.outputs[0].size <= targetBytes * 1.05, `output ${result.outputs[0].size} exceeds target`);
+});
+
 test('merges two real PDF documents', async (t) => {
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'filepilot-pdf-'));
   t.after(() => fsp.rm(directory, { recursive: true, force: true }));

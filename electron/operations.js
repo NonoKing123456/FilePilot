@@ -157,6 +157,76 @@ function applyImageFormat(image, format, quality) {
   throw new Error(`暂不支持输出 ${format.toUpperCase()} 图片。`);
 }
 
+async function encodeImageBuffer(makeImage, format, quality) {
+  const encoded = await applyImageFormat(makeImage(), format, quality).toBuffer({ resolveWithObject: true });
+  return {
+    buffer: encoded.data,
+    width: encoded.info.width,
+    height: encoded.info.height,
+    format,
+    quality
+  };
+}
+
+/**
+ * Encodes an image so that the result fits in `targetBytes`, keeping the
+ * highest quality that still fits. Large photos therefore do not need the user
+ * to guess a quality percentage.
+ *
+ * Encoding is expensive at full resolution, so instead of a plain bisection it
+ * probes once and then corrects using the observed size/quality slope. The
+ * preview limits itself to a single correction round to stay responsive while
+ * the export path keeps correcting until the target is met.
+ */
+async function encodeToTargetSize(makeImage, format, targetBytes, options = {}) {
+  const target = Math.max(16 * 1024, Number(targetBytes) || 0);
+  // Aim slightly under the requested size so the exported file never overshoots.
+  const goal = target * 0.97;
+  const maxRounds = options.thorough === false ? 2 : 4;
+  const attempts = [];
+  const run = async (quality) => {
+    const encoded = await encodeImageBuffer(makeImage, format, clamp(Math.round(quality), 20, 95));
+    attempts.push(encoded);
+    return encoded;
+  };
+  const fits = (encoded) => encoded.buffer.length <= goal;
+  const pick = () => attempts.filter(fits).sort((a, b) => b.quality - a.quality)[0]
+    || attempts.filter((attempt) => attempt.buffer.length <= target).sort((a, b) => b.quality - a.quality)[0]
+    || attempts.slice().sort((a, b) => a.buffer.length - b.buffer.length)[0];
+
+  let low = 20;
+  let high = 95;
+  let current = await run(75);
+  if (fits(current)) {
+    low = 75;
+    current = await run(92);
+    if (fits(current)) low = 92;
+    else high = 92;
+  } else {
+    high = 75;
+  }
+  for (let round = 0; round < maxRounds && high - low > 2 && !fits(current); round += 1) {
+    const next = clamp(Math.round(current.quality * Math.pow(goal / current.buffer.length, 1 / 1.15)), low + 2, current.quality - 2);
+    current = await run(next);
+    if (fits(current)) low = current.quality;
+    else high = current.quality;
+  }
+  const winner = pick();
+  return { ...winner, targeted: true, reachedTarget: winner.buffer.length <= target };
+}
+
+async function renderImageVariant(image, filePath, options = {}) {
+  const format = resolveImageFormat(filePath, options.format);
+  const targetBytes = Number(options.targetBytes) > 0 ? Number(options.targetBytes) : 0;
+  if (targetBytes) return encodeToTargetSize(() => image.clone(), format, targetBytes, { thorough: options.thoroughTarget !== false });
+  const quality = clamp(options.quality || 82, 1, 100);
+  return { ...(await encodeImageBuffer(() => image.clone(), format, quality)), targeted: false, reachedTarget: true };
+}
+
+function imageOutputExtension(format) {
+  return format === 'jpeg' ? '.jpg' : format === 'tiff' ? '.tif' : `.${format}`;
+}
+
 async function previewImage(filePath, options = {}, original = false) {
   const stat = await fsp.stat(filePath);
   const prepared = await prepareImage(filePath, original ? {} : options);
@@ -167,20 +237,22 @@ async function previewImage(filePath, options = {}, original = false) {
       width: prepared.sourceWidth,
       height: prepared.sourceHeight,
       originalSize: stat.size,
-      estimatedSize: stat.size
+      estimatedSize: stat.size,
+      format: path.extname(filePath).slice(1).toLowerCase()
     };
   }
-  const format = resolveImageFormat(filePath, options.format);
-  const quality = Number(options.quality || 82);
-  const encoded = await applyImageFormat(prepared.image.clone(), format, quality).toBuffer({ resolveWithObject: true });
-  const previewBuffer = await sharp(encoded.data).resize({ width: 1100, height: 820, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+  const variant = await renderImageVariant(prepared.image, filePath, { ...options, thoroughTarget: false });
+  const previewBuffer = await sharp(variant.buffer).resize({ width: 1100, height: 820, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
   return {
     dataUrl: `data:image/jpeg;base64,${previewBuffer.toString('base64')}`,
-    width: encoded.info.width,
-    height: encoded.info.height,
+    width: variant.width,
+    height: variant.height,
     originalSize: stat.size,
-    estimatedSize: encoded.data.length,
-    format
+    estimatedSize: variant.buffer.length,
+    format: variant.format,
+    quality: variant.quality,
+    targeted: variant.targeted,
+    reachedTarget: variant.reachedTarget
   };
 }
 
@@ -188,18 +260,15 @@ async function processImages(files, options, outputDirectory, onProgress) {
   const imageFiles = files.filter((file) => typeOf(file) === 'image');
   if (!imageFiles.length) throw new Error('请选择至少一个图片文件。');
   const outputs = [];
-  const quality = Number(options.quality || 82);
 
   for (let index = 0; index < imageFiles.length; index += 1) {
     const file = imageFiles[index];
     report(onProgress, index, imageFiles.length, '正在处理图片', file.name);
     const prepared = await prepareImage(file.path, options);
-    const format = resolveImageFormat(file.path, options.format);
-    const image = applyImageFormat(prepared.image, format, quality);
-    const outputExt = format === 'jpeg' ? '.jpg' : format === 'tiff' ? '.tif' : `.${format}`;
+    const variant = await renderImageVariant(prepared.image, file.path, options);
     const base = `${path.basename(file.name, path.extname(file.name))}-${options.nameSuffix || 'processed'}`;
-    const outputPath = await uniqueOutputPath(outputDirectory, base, outputExt);
-    await image.toFile(outputPath);
+    const outputPath = await uniqueOutputPath(outputDirectory, base, imageOutputExtension(variant.format));
+    await fsp.writeFile(outputPath, variant.buffer);
     const stat = await fsp.stat(outputPath);
     outputs.push({ path: outputPath, name: path.basename(outputPath), size: stat.size, sourceSize: file.size });
   }
@@ -456,7 +525,7 @@ async function runOperation({ operation, files = [], options = {}, outputDirecto
   if (!files.length) throw new Error('请先添加文件。');
   const selected = operation === 'smart' ? chooseSmartOperation(files) : operation;
   let outputs;
-  if (['image-optimize', 'image-convert', 'image-resize', 'image-crop'].includes(selected)) {
+  if (['image-optimize', 'image-convert', 'image-adjust', 'image-resize', 'image-crop'].includes(selected)) {
     outputs = await processImages(files, options, outputDirectory, onProgress);
   } else if (selected === 'pdf-merge') outputs = await mergePdfs(files, options, outputDirectory, onProgress);
   else if (selected === 'pdf-split') outputs = await splitPdfs(files, options, outputDirectory, onProgress);

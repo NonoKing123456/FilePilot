@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
     <title>FilePilot</title>
     <link rel="stylesheet" href="styles-v2.css" />
   </head>
@@ -40,9 +41,9 @@
         <div class="quick-tools">
           <p>常用工具</p>
           <div class="quick-grid">
-            <button class="quick-card" data-tool="image-optimize"><span class="quick-icon image">▧</span><span><strong>压缩图片</strong><small>缩小体积，尽量保持清晰</small></span><b>→</b></button>
+            <button class="quick-card" data-tool="image-optimize"><span class="quick-icon image">▧</span><span><strong>压缩图片</strong><small>指定体积，或选一个压缩强度</small></span><b>→</b></button>
+            <button class="quick-card" data-tool="image-adjust"><span class="quick-icon image">⌗</span><span><strong>调整图片画面</strong><small>裁剪和尺寸一次调好</small></span><b>→</b></button>
             <button class="quick-card" data-tool="pdf-merge"><span class="quick-icon pdf">▤</span><span><strong>合并 PDF</strong><small>按顺序合成一个文档</small></span><b>→</b></button>
-            <button class="quick-card" data-tool="media-convert"><span class="quick-icon media">▷</span><span><strong>转换音视频</strong><small>格式转换、压缩和裁剪</small></span><b>→</b></button>
             <button class="quick-card" data-tool="archive-create"><span class="quick-icon archive">⌑</span><span><strong>打包成 ZIP</strong><small>把多个文件整理成压缩包</small></span><b>→</b></button>
           </div>
         </div>
@@ -55,13 +56,20 @@
         </div>
         <div class="work-grid">
           <div class="content-column">
+            <div class="tool-tabs" id="actionChoices"></div>
             <section class="panel image-preview-panel" id="imagePreviewPanel" hidden>
               <div class="preview-heading">
-                <div><h2 id="previewFileName">图片预览</h2><p id="previewHint">左边是原图，右边是处理结果</p></div>
-                <span class="preview-live"><i></i>实时预览</span>
+                <div class="preview-title">
+                  <h2 id="previewFileName">图片预览</h2>
+                  <p id="previewHint">这里是处理后的样子</p>
+                </div>
+                <div class="preview-tools">
+                  <button class="compare-toggle" id="compareToggle" hidden>与另一张对比</button>
+                  <span class="preview-live" id="previewLive"><i></i>实时预览</span>
+                </div>
               </div>
-              <div class="preview-grid">
-                <div class="preview-pane">
+              <div class="preview-stage" id="previewStage">
+                <div class="preview-pane" id="originalPane" hidden>
                   <div class="preview-label"><strong id="originalPreviewLabel">原图</strong><span id="originalPreviewMeta">—</span></div>
                   <div class="preview-canvas">
                     <div class="preview-media" id="cropMedia">
@@ -69,6 +77,7 @@
                       <div class="crop-overlay" id="cropOverlay" hidden>
                         <i class="crop-grid-line vertical first"></i><i class="crop-grid-line vertical second"></i>
                         <i class="crop-grid-line horizontal first"></i><i class="crop-grid-line horizontal second"></i>
+                        <span class="crop-badge" id="cropBadge">—</span>
                         <button data-handle="nw" aria-label="左上角裁剪手柄"></button><button data-handle="ne" aria-label="右上角裁剪手柄"></button>
                         <button data-handle="sw" aria-label="左下角裁剪手柄"></button><button data-handle="se" aria-label="右下角裁剪手柄"></button>
                       </div>
@@ -76,12 +85,17 @@
                     <span class="preview-loading" id="originalPreviewLoading">正在读取图片…</span>
                   </div>
                 </div>
-                <div class="preview-pane result-preview-pane">
-                  <div class="preview-label"><strong id="processedPreviewLabel">处理后</strong><span id="processedPreviewMeta">—</span></div>
+                <div class="preview-pane" id="resultPane">
+                  <div class="preview-label"><strong id="processedPreviewLabel">结果</strong><span id="processedPreviewMeta">—</span></div>
                   <div class="preview-canvas processed-canvas"><img id="processedPreviewImage" alt="处理结果预览" /><span class="preview-loading" id="processedPreviewLoading">正在生成预览…</span></div>
                 </div>
               </div>
-              <div class="preview-summary" id="previewSummary"><span>选择一个图片操作后，这里会显示实际效果。</span></div>
+              <div class="size-compare" id="sizeCompare" hidden>
+                <div class="size-row"><span>原图</span><div class="size-bar"><i class="size-bar-original" style="width:100%"></i></div><strong id="sizeOriginalValue">—</strong></div>
+                <div class="size-row"><span>处理后</span><div class="size-bar"><i id="sizeResultBar" style="width:100%"></i></div><strong id="sizeResultValue">—</strong></div>
+                <p class="size-verdict" id="sizeVerdict">正在估算体积…</p>
+              </div>
+              <div class="preview-summary" id="previewSummary"></div>
             </section>
             <section class="panel file-panel">
               <div class="panel-heading"><h2>文件</h2><span id="fileCountBadge">0</span></div>
@@ -98,12 +112,15 @@
             </section>
           </div>
           <aside class="action-panel panel">
-            <div class="action-heading"><h2>你想怎么处理？</h2><p id="recommendationText">已为当前文件推荐最合适的操作</p></div>
-            <div class="action-choices" id="actionChoices"></div>
-            <div class="settings-panel" id="settingsPanel"></div>
-            <div class="output-summary"><span>预计输出</span><strong id="estimateText">—</strong></div>
-            <button class="run-button" id="runButton"><span id="runButtonLabel">开始处理</span><b>→</b></button>
-            <p class="engine-note" id="engineStatus">正在检查处理引擎…</p>
+            <div class="action-scroll">
+              <div class="action-heading"><h2 id="toolTitle">压缩体积</h2><p id="recommendationText">已为当前文件推荐最合适的操作</p></div>
+              <div class="settings-panel" id="settingsPanel"></div>
+            </div>
+            <div class="run-area">
+              <div class="output-summary"><span>预计输出</span><strong id="estimateText">—</strong></div>
+              <button class="run-button" id="runButton"><span id="runButtonLabel">开始处理</span><b>→</b></button>
+              <p class="engine-note" id="engineStatus">正在检查处理引擎…</p>
+            </div>
           </aside>
         </div>
       </section>
