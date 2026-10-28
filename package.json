@@ -1,0 +1,62 @@
+{
+  "name": "filepilot-desktop",
+  "version": "0.2.0",
+  "description": "本地优先的万能文件处理桌面客户端",
+  "main": "electron/main.js",
+  "author": "FilePilot",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "ffmpeg-static": "^5.2.0",
+    "mammoth": "^1.9.1",
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.34.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.filepilot.desktop",
+    "productName": "FilePilot",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FilePilot",
+      "artifactName": "FilePilot-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "FilePilot-Portable-${version}-${arch}.${ext}"
+    }
+  }
+}

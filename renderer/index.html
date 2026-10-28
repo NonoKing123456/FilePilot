@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>FilePilot</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28"><path d="M7.2 4.5h8.1l5.5 5.4v13.6H7.2z"/><path d="M15.3 4.5v5.6h5.5"/><path d="M10.7 15.1h6.6M10.7 18.7h4.4"/></svg>
+          </div>
+          <div>
+            <strong>FilePilot</strong>
+            <span>文件万能助手</span>
+          </div>
+        </div>
+
+        <nav class="main-nav" aria-label="主导航">
+          <button class="nav-item active" data-view="workspace">
+            <span class="nav-icon">⌁</span><span>工作台</span><kbd>⌘1</kbd>
+          </button>
+          <button class="nav-item" data-view="history">
+            <span class="nav-icon">◴</span><span>处理记录</span>
+          </button>
+        </nav>
+
+        <div class="nav-section">
+          <p class="nav-label">文件工具</p>
+          <button class="nav-item tool-nav" data-tool="image-optimize"><span class="nav-icon">▧</span><span>图片处理</span><em>5</em></button>
+          <button class="nav-item tool-nav" data-tool="pdf-merge"><span class="nav-icon">▤</span><span>PDF 工具</span><em>4</em></button>
+          <button class="nav-item tool-nav" data-tool="media-convert"><span class="nav-icon">▷</span><span>音频与视频</span><em>3</em></button>
+          <button class="nav-item tool-nav" data-tool="document-convert"><span class="nav-icon">Aa</span><span>文档与表格</span><em>4</em></button>
+          <button class="nav-item tool-nav" data-tool="archive-create"><span class="nav-icon">⌑</span><span>压缩与打包</span><em>1</em></button>
+        </div>
+
+        <div class="privacy-card">
+          <div class="privacy-icon">✓</div>
+          <div>
+            <strong>本地安全处理</strong>
+            <span>文件不会离开此电脑</span>
+          </div>
+        </div>
+        <div class="sidebar-footer">
+          <span class="engine-dot"></span>
+          <span id="engineStatus">正在检查处理引擎…</span>
+          <button id="aboutButton" aria-label="关于">?</button>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">LOCAL FILE WORKSPACE</p>
+            <h1>今天想处理什么文件？</h1>
+          </div>
+          <div class="top-actions">
+            <button class="path-button" id="outputPathButton" title="更改输出文件夹">
+              <span class="folder-icon">⌑</span>
+              <span><small>输出到</small><strong id="outputPathLabel">FilePilot Output</strong></span>
+              <span>⌄</span>
+            </button>
+            <button class="icon-button" id="clearAllButton" title="清空工作台">↺</button>
+          </div>
+        </header>
+
+        <section class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="拖入文件或点击选择">
+          <div class="drop-art" aria-hidden="true">
+            <div class="file-card card-back"><span>PDF</span></div>
+            <div class="file-card card-mid"><span>IMG</span></div>
+            <div class="file-card card-front"><svg viewBox="0 0 32 32"><path d="M16 22V8m0 0-5 5m5-5 5 5"/><path d="M7 21v4h18v-4"/></svg></div>
+          </div>
+          <div class="drop-copy">
+            <h2>把文件拖到这里</h2>
+            <p>图片、PDF、视频、音频、文档、表格，常见格式都可以</p>
+          </div>
+          <button class="primary-button" id="chooseFilesButton">选择文件</button>
+          <div class="drop-meta"><span>支持批量处理</span><i></i><span>可一次拖入多个文件</span><i></i><span>全程本地运行</span></div>
+        </section>
+
+        <section class="quick-section" id="quickSection">
+          <div class="section-heading">
+            <div><span class="section-kicker">QUICK START</span><h2>常用工具</h2></div>
+            <button id="showAllToolsButton">查看全部 <span>→</span></button>
+          </div>
+          <div class="tool-grid">
+            <button class="tool-card coral" data-tool="image-optimize">
+              <span class="tool-icon">▧</span><span><strong>图片压缩</strong><small>智能减小体积，保持清晰</small></span><em>JPG · PNG · WEBP</em>
+            </button>
+            <button class="tool-card blue" data-tool="pdf-merge">
+              <span class="tool-icon">▤</span><span><strong>PDF 合并</strong><small>拖动排序，一键合并</small></span><em>PDF</em>
+            </button>
+            <button class="tool-card violet" data-tool="media-convert">
+              <span class="tool-icon">▷</span><span><strong>视频转换</strong><small>转换格式、裁剪与压缩</small></span><em>MP4 · MOV · WEBM</em>
+            </button>
+            <button class="tool-card green" data-tool="document-convert">
+              <span class="tool-icon">Aa</span><span><strong>文档转换</strong><small>文档、表格与文本互转</small></span><em>DOCX · XLSX · CSV</em>
+            </button>
+          </div>
+        </section>
+
+        <section class="workspace" id="workspace" hidden>
+          <div class="workspace-main">
+            <div class="section-heading compact">
+              <div><span class="section-kicker">CURRENT BATCH</span><h2>待处理文件 <b id="fileCountBadge">0</b></h2></div>
+              <button id="addMoreButton">＋ 添加文件</button>
+            </div>
+            <div class="file-list" id="fileList"></div>
+            <div class="result-panel" id="resultPanel" hidden>
+              <div class="result-heading">
+                <div class="success-badge">✓</div>
+                <div><strong>处理完成</strong><span id="resultSummary">结果已保存</span></div>
+                <button id="openOutputButton">打开输出文件夹</button>
+              </div>
+              <div class="result-list" id="resultList"></div>
+            </div>
+          </div>
+
+          <aside class="inspector">
+            <div class="inspector-head">
+              <span class="section-kicker">ACTION</span>
+              <h2>选择处理方式</h2>
+            </div>
+            <label class="field-label" for="operationSelect">处理工具</label>
+            <select id="operationSelect" class="select-control"></select>
+            <div class="recommendation" id="recommendation">
+              <span>✦</span><p><strong>智能推荐</strong><small id="recommendationText">根据文件类型选择最合适的工具</small></p>
+            </div>
+            <div class="settings" id="settingsPanel"></div>
+            <div class="estimate-row"><span>预计输出</span><strong id="estimateText">—</strong></div>
+            <button class="run-button" id="runButton"><span id="runButtonLabel">开始处理</span><em>→</em></button>
+            <p class="run-hint">处理期间请保持应用开启</p>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div class="progress-overlay" id="progressOverlay" hidden>
+      <div class="progress-card">
+        <div class="progress-orbit"><span id="progressPercent">0%</span></div>
+        <p class="section-kicker">FILEPILOT IS WORKING</p>
+        <h2 id="progressTitle">正在处理文件</h2>
+        <p id="progressDetail">准备处理引擎…</p>
+        <div class="progress-track"><i id="progressBar"></i></div>
+        <small>所有文件都在本机处理，请勿关闭应用</small>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

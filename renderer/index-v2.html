@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>FilePilot</title>
+    <link rel="stylesheet" href="styles-v2.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M9 5.5h9.5L24 11v15.5H9z"/><path d="M18.5 5.5V11H24"/><path d="M12.8 17h7M12.8 21h4.6"/></svg>
+          </span>
+          <div><strong>FilePilot</strong><span>万能文件助手</span></div>
+        </div>
+        <div class="header-actions">
+          <div class="privacy-pill"><span></span>仅在本机处理</div>
+          <button class="output-button" id="outputPathButton" title="更改输出文件夹">
+            <svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
+            <span><small>保存到</small><strong id="outputPathLabel">FilePilot Output</strong></span><b>⌄</b>
+          </button>
+          <button class="new-task-button" id="clearAllButton" title="新建任务">＋ 新任务</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="empty-view" id="emptyView">
+        <div class="hero-copy"><h1>文件处理，本该简单一点</h1><p>把文件拖进来，FilePilot 会自动告诉你可以做什么。</p></div>
+        <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="拖入文件或点击选择">
+          <div class="drop-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 21V8m0 0-5 5m5-5 5 5"/><path d="M6.5 21v4.5h19V21"/></svg></div>
+          <h2>拖入文件，或点击选择</h2>
+          <p>支持图片、PDF、音视频、文档、表格和压缩文件</p>
+          <button class="choose-button" id="chooseFilesButton">选择文件</button>
+          <div class="drop-hint"><span>✓ 批量处理</span><span>✓ 文件不上传</span><span>✓ 保留原文件</span></div>
+        </div>
+        <div class="quick-tools">
+          <p>常用工具</p>
+          <div class="quick-grid">
+            <button class="quick-card" data-tool="image-optimize"><span class="quick-icon image">▧</span><span><strong>压缩图片</strong><small>缩小体积，尽量保持清晰</small></span><b>→</b></button>
+            <button class="quick-card" data-tool="pdf-merge"><span class="quick-icon pdf">▤</span><span><strong>合并 PDF</strong><small>按顺序合成一个文档</small></span><b>→</b></button>
+            <button class="quick-card" data-tool="media-convert"><span class="quick-icon media">▷</span><span><strong>转换音视频</strong><small>格式转换、压缩和裁剪</small></span><b>→</b></button>
+            <button class="quick-card" data-tool="archive-create"><span class="quick-icon archive">⌑</span><span><strong>打包成 ZIP</strong><small>把多个文件整理成压缩包</small></span><b>→</b></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" id="workspace" hidden>
+        <div class="workspace-heading">
+          <div><button id="backButton" class="back-button" title="返回">←</button><span><h1>处理文件</h1><p id="workspaceSubtitle">已准备好 1 个文件</p></span></div>
+          <button class="add-button" id="addMoreButton">＋ 添加文件</button>
+        </div>
+        <div class="work-grid">
+          <div class="content-column">
+            <section class="panel image-preview-panel" id="imagePreviewPanel" hidden>
+              <div class="preview-heading">
+                <div><h2 id="previewFileName">图片预览</h2><p id="previewHint">左边是原图，右边是处理结果</p></div>
+                <span class="preview-live"><i></i>实时预览</span>
+              </div>
+              <div class="preview-grid">
+                <div class="preview-pane">
+                  <div class="preview-label"><strong id="originalPreviewLabel">原图</strong><span id="originalPreviewMeta">—</span></div>
+                  <div class="preview-canvas">
+                    <div class="preview-media" id="cropMedia">
+                      <img id="originalPreviewImage" alt="原图预览" />
+                      <div class="crop-overlay" id="cropOverlay" hidden>
+                        <i class="crop-grid-line vertical first"></i><i class="crop-grid-line vertical second"></i>
+                        <i class="crop-grid-line horizontal first"></i><i class="crop-grid-line horizontal second"></i>
+                        <button data-handle="nw" aria-label="左上角裁剪手柄"></button><button data-handle="ne" aria-label="右上角裁剪手柄"></button>
+                        <button data-handle="sw" aria-label="左下角裁剪手柄"></button><button data-handle="se" aria-label="右下角裁剪手柄"></button>
+                      </div>
+                    </div>
+                    <span class="preview-loading" id="originalPreviewLoading">正在读取图片…</span>
+                  </div>
+                </div>
+                <div class="preview-pane result-preview-pane">
+                  <div class="preview-label"><strong id="processedPreviewLabel">处理后</strong><span id="processedPreviewMeta">—</span></div>
+                  <div class="preview-canvas processed-canvas"><img id="processedPreviewImage" alt="处理结果预览" /><span class="preview-loading" id="processedPreviewLoading">正在生成预览…</span></div>
+                </div>
+              </div>
+              <div class="preview-summary" id="previewSummary"><span>选择一个图片操作后，这里会显示实际效果。</span></div>
+            </section>
+            <section class="panel file-panel">
+              <div class="panel-heading"><h2>文件</h2><span id="fileCountBadge">0</span></div>
+              <div class="file-list" id="fileList"></div>
+              <button class="add-more-drop" id="addMoreDropButton"><span>＋</span>继续添加文件</button>
+            </section>
+            <section class="task-progress" id="taskProgress" hidden>
+              <div class="progress-top"><span class="spinner"></span><div><strong id="progressTitle">正在处理</strong><p id="progressDetail">准备处理引擎…</p></div><b id="progressPercent">0%</b></div>
+              <div class="progress-track"><i id="progressBar"></i></div>
+            </section>
+            <section class="result-panel" id="resultPanel" hidden>
+              <div class="result-heading"><span class="success-icon">✓</span><div><h2>处理完成</h2><p id="resultSummary">结果已保存</p></div><button id="openOutputButton">打开文件夹</button></div>
+              <div class="result-list" id="resultList"></div>
+            </section>
+          </div>
+          <aside class="action-panel panel">
+            <div class="action-heading"><h2>你想怎么处理？</h2><p id="recommendationText">已为当前文件推荐最合适的操作</p></div>
+            <div class="action-choices" id="actionChoices"></div>
+            <div class="settings-panel" id="settingsPanel"></div>
+            <div class="output-summary"><span>预计输出</span><strong id="estimateText">—</strong></div>
+            <button class="run-button" id="runButton"><span id="runButtonLabel">开始处理</span><b>→</b></button>
+            <p class="engine-note" id="engineStatus">正在检查处理引擎…</p>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="renderer-v2.js"></script>
+  </body>
+</html>
